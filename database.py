@@ -122,6 +122,20 @@ def get_total_between(start_date: date, end_date: date) -> Decimal:
         return Decimal(total or 0)
 
 
+def get_daily_totals_between(start_date: date, end_date: date) -> dict[date, Decimal]:
+    """Return summed P&L by day between two dates, inclusive."""
+    init_db()
+    with SessionLocal() as session:
+        rows: Iterable[tuple[date, Decimal | None]] = session.execute(
+            select(Trade.date, func.coalesce(func.sum(Trade.amount), 0))
+            .where(Trade.date >= start_date)
+            .where(Trade.date <= end_date)
+            .group_by(Trade.date)
+            .order_by(Trade.date)
+        ).all()
+        return {trade_date: Decimal(total or 0) for trade_date, total in rows}
+
+
 def get_trades_for_day(trade_date: date) -> list[Trade]:
     """Return all trades recorded for a single day."""
     init_db()

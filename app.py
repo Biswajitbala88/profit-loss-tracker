@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from html import escape
 import calendar
@@ -10,6 +10,7 @@ import streamlit as st
 from database import (
     add_trade,
     delete_trade,
+    get_daily_totals_between,
     get_monthly_earnings,
     get_monthly_totals,
     get_total_between,
@@ -213,6 +214,159 @@ def inject_css() -> None:
                 text-align: center;
             }
 
+            .yearly-shell {
+                margin-top: 1.6rem;
+                background: #090b0f;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 1rem;
+                overflow-x: auto;
+                box-shadow: 0 18px 48px rgba(0, 0, 0, 0.28);
+            }
+
+            .yearly-header {
+                align-items: start;
+                display: flex;
+                justify-content: space-between;
+                gap: 1rem;
+                margin-bottom: 0.9rem;
+            }
+
+            .yearly-title {
+                color: var(--text);
+                font-size: 1.05rem;
+                font-weight: 800;
+                letter-spacing: 0;
+                margin: 0;
+            }
+
+            .yearly-subtitle {
+                color: var(--muted);
+                font-size: 0.82rem;
+                margin-top: 0.25rem;
+            }
+
+            .yearly-legend {
+                align-items: center;
+                color: var(--muted);
+                display: flex;
+                flex-wrap: wrap;
+                font-size: 0.72rem;
+                gap: 0.32rem;
+                justify-content: flex-end;
+                min-width: 210px;
+            }
+
+            .yearly-grid-wrap {
+                display: inline-grid;
+                grid-template-columns: 28px auto;
+                grid-template-rows: 18px auto;
+                gap: 0.35rem 0.45rem;
+                min-width: 820px;
+            }
+
+            .month-row {
+                display: grid;
+                grid-template-columns: repeat(var(--weeks), 13px);
+                grid-column: 2;
+                grid-row: 1;
+                gap: 3px;
+            }
+
+            .month-marker {
+                color: var(--muted);
+                font-size: 0.68rem;
+                line-height: 1;
+            }
+
+            .weekday-column {
+                display: grid;
+                grid-template-rows: repeat(7, 13px);
+                gap: 3px;
+                grid-column: 1;
+                grid-row: 2;
+            }
+
+            .heatmap-grid {
+                display: grid;
+                grid-template-columns: repeat(var(--weeks), 13px);
+                grid-template-rows: repeat(7, 13px);
+                gap: 3px;
+                grid-column: 2;
+                grid-row: 2;
+                grid-auto-flow: column;
+            }
+
+            .weekday-tick {
+                color: var(--muted);
+                font-size: 0.64rem;
+                line-height: 13px;
+                text-align: right;
+            }
+
+            .heat-day,
+            .legend-swatch {
+                border: 1px solid rgba(255, 255, 255, 0.08);
+                border-radius: 3px;
+                display: block;
+                height: 13px;
+                width: 13px;
+            }
+
+            .heat-day.empty {
+                background: transparent;
+                border-color: transparent;
+            }
+
+            .heat-day.neutral,
+            .legend-swatch.neutral { background: #171a20; }
+
+            .heat-day.profit-1,
+            .legend-swatch.profit-1 { background: rgba(24, 169, 87, 0.34); }
+
+            .heat-day.profit-2,
+            .legend-swatch.profit-2 { background: rgba(24, 169, 87, 0.58); }
+
+            .heat-day.profit-3,
+            .legend-swatch.profit-3 { background: rgba(24, 169, 87, 0.82); }
+
+            .heat-day.loss-1,
+            .legend-swatch.loss-1 { background: rgba(216, 74, 74, 0.36); }
+
+            .heat-day.loss-2,
+            .legend-swatch.loss-2 { background: rgba(216, 74, 74, 0.62); }
+
+            .heat-day.loss-3,
+            .legend-swatch.loss-3 { background: rgba(216, 74, 74, 0.88); }
+
+            .yearly-summary {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 0.65rem;
+                margin-top: 1rem;
+            }
+
+            .summary-item {
+                background: #101216;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 0.7rem 0.8rem;
+            }
+
+            .summary-label {
+                color: var(--muted);
+                font-size: 0.68rem;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+
+            .summary-value {
+                color: var(--text);
+                font-size: 1rem;
+                font-weight: 800;
+                margin-top: 0.2rem;
+            }
+
             div[data-testid="stButton"] > button {
                 background: #171a20;
                 border: 1px solid var(--border);
@@ -256,6 +410,20 @@ def inject_css() -> None:
                 .weekday {
                     font-size: 0.62rem;
                     padding: 0.55rem 0.25rem;
+                }
+
+                .yearly-header,
+                .yearly-summary {
+                    grid-template-columns: 1fr;
+                }
+
+                .yearly-header {
+                    display: grid;
+                }
+
+                .yearly-legend {
+                    justify-content: flex-start;
+                    min-width: 0;
                 }
             }
         </style>
@@ -307,6 +475,118 @@ def render_day_cell(day_number: int, total: Decimal | None, selected_year: int, 
         "</div>"
         "</a>"
     )
+
+
+def heatmap_class(total: Decimal | None, max_profit: Decimal, max_loss: Decimal) -> str:
+    if total is None or total == 0:
+        return "neutral"
+
+    if total > 0:
+        intensity = total / max_profit if max_profit else Decimal("0")
+        if intensity >= Decimal("0.67"):
+            return "profit-3"
+        if intensity >= Decimal("0.34"):
+            return "profit-2"
+        return "profit-1"
+
+    intensity = abs(total) / max_loss if max_loss else Decimal("0")
+    if intensity >= Decimal("0.67"):
+        return "loss-3"
+    if intensity >= Decimal("0.34"):
+        return "loss-2"
+    return "loss-1"
+
+
+def render_yearly_heatmap(today: date) -> None:
+    start_date = today - timedelta(days=364)
+    first_grid_day = start_date - timedelta(days=(start_date.weekday() + 1) % 7)
+    last_grid_day = today + timedelta(days=(5 - today.weekday()) % 7)
+    total_days = (last_grid_day - first_grid_day).days + 1
+    total_weeks = total_days // 7
+    daily_totals = get_daily_totals_between(start_date, today)
+
+    positive_totals = [total for total in daily_totals.values() if total > 0]
+    negative_totals = [abs(total) for total in daily_totals.values() if total < 0]
+    max_profit = max(positive_totals, default=Decimal("0"))
+    max_loss = max(negative_totals, default=Decimal("0"))
+    active_days = len(daily_totals)
+    profitable_days = sum(1 for total in daily_totals.values() if total > 0)
+    losing_days = sum(1 for total in daily_totals.values() if total < 0)
+    consistency = (Decimal(active_days) / Decimal("365")) * Decimal("100")
+
+    month_cells: list[str] = []
+    previous_month = None
+    for week_index in range(total_weeks):
+        week_start = first_grid_day + timedelta(days=week_index * 7)
+        label = ""
+        if start_date <= week_start <= today and week_start.month != previous_month:
+            label = calendar.month_abbr[week_start.month]
+            previous_month = week_start.month
+        month_cells.append(f'<div class="month-marker">{escape(label)}</div>')
+
+    day_cells: list[str] = []
+    for week_index in range(total_weeks):
+        for weekday_index in range(7):
+            current_day = first_grid_day + timedelta(days=week_index * 7 + weekday_index)
+            if current_day < start_date or current_day > today:
+                day_cells.append('<span class="heat-day empty"></span>')
+                continue
+
+            total = daily_totals.get(current_day)
+            css_class = heatmap_class(total, max_profit, max_loss)
+            title_amount = money(total) if total is not None else "No trades"
+            title = f"{current_day:%b %d, %Y}: {title_amount}"
+            day_cells.append(f'<span class="heat-day {css_class}" title="{escape(title)}"></span>')
+
+    html = f"""
+        <div class="yearly-shell">
+            <div class="yearly-header">
+                <div>
+                    <div class="yearly-title">Yearly View</div>
+                    <div class="yearly-subtitle">Trading consistency over the last 12 months</div>
+                </div>
+                <div class="yearly-legend">
+                    <span>Loss</span>
+                    <span class="legend-swatch loss-3"></span>
+                    <span class="legend-swatch loss-2"></span>
+                    <span class="legend-swatch loss-1"></span>
+                    <span class="legend-swatch neutral"></span>
+                    <span class="legend-swatch profit-1"></span>
+                    <span class="legend-swatch profit-2"></span>
+                    <span class="legend-swatch profit-3"></span>
+                    <span>Profit</span>
+                </div>
+            </div>
+            <div class="yearly-grid-wrap" style="--weeks: {total_weeks};">
+                <div class="month-row">{''.join(month_cells)}</div>
+                <div class="weekday-column">
+                    <div class="weekday-tick"></div>
+                    <div class="weekday-tick">Mon</div>
+                    <div class="weekday-tick"></div>
+                    <div class="weekday-tick">Wed</div>
+                    <div class="weekday-tick"></div>
+                    <div class="weekday-tick">Fri</div>
+                    <div class="weekday-tick"></div>
+                </div>
+                <div class="heatmap-grid">{''.join(day_cells)}</div>
+            </div>
+            <div class="yearly-summary">
+                <div class="summary-item">
+                    <div class="summary-label">Active Days</div>
+                    <div class="summary-value">{active_days} / 365</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-label">Consistency</div>
+                    <div class="summary-value">{consistency:.1f}%</div>
+                </div>
+                <div class="summary-item">
+                    <div class="summary-label">Win / Loss Days</div>
+                    <div class="summary-value">{profitable_days} / {losing_days}</div>
+                </div>
+            </div>
+        </div>
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def open_trade_form(trade_date: date) -> None:
@@ -518,6 +798,7 @@ def main() -> None:
 
     calendar_html += "</div></div>"
     st.markdown(calendar_html, unsafe_allow_html=True)
+    render_yearly_heatmap(today)
 
     if st.session_state.show_form:
         render_trade_form()
