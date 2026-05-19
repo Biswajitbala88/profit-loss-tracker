@@ -17,6 +17,7 @@ env/
 *.db
 *.sqlite
 *.sqlite3
+!trades.db
 
 # Tooling and OS noise
 .DS_Store
