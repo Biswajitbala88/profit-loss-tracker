@@ -594,6 +594,83 @@ def open_trade_form(trade_date: date) -> None:
     st.session_state.show_form = True
 
 
+def close_trade_form() -> None:
+    st.session_state.show_form = False
+    st.query_params["show_form"] = "0"
+
+
+def render_edit_trades(selected_date: date) -> None:
+    trades = get_trades_for_day(selected_date)
+
+    if not trades:
+        st.caption("No trades recorded for this day yet.")
+        return
+
+    st.markdown("**Edit trades for selected day**")
+    st.caption(f"{selected_date:%b %d, %Y}")
+    for trade in trades:
+        with st.form(f"edit_trade_{trade.id}"):
+            st.markdown(f"**Trade #{trade.id}**")
+            edit_cols = st.columns([1, 1, 2])
+            with edit_cols[0]:
+                edited_date = st.date_input("Date", value=trade.date, key=f"date_{trade.id}")
+            with edit_cols[1]:
+                edited_amount = st.number_input(
+                    "Amount",
+                    value=float(trade.amount),
+                    step=25.0,
+                    format="%.2f",
+                    key=f"amount_{trade.id}",
+                )
+            with edit_cols[2]:
+                edited_note = st.text_input(
+                    "Note",
+                    value=trade.note,
+                    placeholder="Optional context",
+                    key=f"note_{trade.id}",
+                )
+
+            action_cols = st.columns(2)
+            with action_cols[0]:
+                update_submitted = st.form_submit_button("Update", use_container_width=True)
+            with action_cols[1]:
+                delete_submitted = st.form_submit_button("Delete", use_container_width=True)
+
+        if update_submitted:
+            try:
+                parsed_amount = Decimal(str(edited_amount))
+                if parsed_amount == 0:
+                    st.warning("Enter a non-zero trade amount.")
+                    return
+                updated = update_trade(trade.id, edited_date, parsed_amount, edited_note)
+            except (InvalidOperation, ValueError) as exc:
+                st.error(f"Could not update trade: {exc}")
+                return
+            except Exception as exc:
+                st.error(f"Database error: {exc}")
+                return
+
+            if updated is None:
+                st.error("That trade no longer exists.")
+                return
+            st.success("Trade updated.")
+            st.rerun()
+
+        if delete_submitted:
+            try:
+                deleted = delete_trade(trade.id)
+            except Exception as exc:
+                st.error(f"Database error: {exc}")
+                return
+
+            if not deleted:
+                st.error("That trade no longer exists.")
+                return
+            st.success("Trade deleted.")
+            st.rerun()
+
+
+@st.dialog("Add / Edit Trade", width="large", on_dismiss=close_trade_form)
 def render_trade_form() -> None:
     selected_date = st.session_state.get("selected_date", date.today())
     st.subheader(f"Add Trade - {selected_date:%b %d, %Y}")
@@ -619,74 +696,14 @@ def render_trade_form() -> None:
             return
 
         st.success("Trade saved.")
-        st.session_state.show_form = False
         st.rerun()
 
-    trades = get_trades_for_day(selected_date)
-    if trades:
-        st.caption("Edit trades for selected day")
-        for trade in trades:
-            with st.form(f"edit_trade_{trade.id}"):
-                st.markdown(f"**Trade #{trade.id}**")
-                edit_cols = st.columns([1, 1, 2])
-                with edit_cols[0]:
-                    edited_date = st.date_input("Date", value=trade.date, key=f"date_{trade.id}")
-                with edit_cols[1]:
-                    edited_amount = st.number_input(
-                        "Amount",
-                        value=float(trade.amount),
-                        step=25.0,
-                        format="%.2f",
-                        key=f"amount_{trade.id}",
-                    )
-                with edit_cols[2]:
-                    edited_note = st.text_input(
-                        "Note",
-                        value=trade.note,
-                        placeholder="Optional context",
-                        key=f"note_{trade.id}",
-                    )
+    st.divider()
+    render_edit_trades(selected_date)
 
-                action_cols = st.columns(2)
-                with action_cols[0]:
-                    update_submitted = st.form_submit_button("Update", use_container_width=True)
-                with action_cols[1]:
-                    delete_submitted = st.form_submit_button("Delete", use_container_width=True)
-
-            if update_submitted:
-                try:
-                    parsed_amount = Decimal(str(edited_amount))
-                    if parsed_amount == 0:
-                        st.warning("Enter a non-zero trade amount.")
-                        return
-                    updated = update_trade(trade.id, edited_date, parsed_amount, edited_note)
-                except (InvalidOperation, ValueError) as exc:
-                    st.error(f"Could not update trade: {exc}")
-                    return
-                except Exception as exc:
-                    st.error(f"Database error: {exc}")
-                    return
-
-                if updated is None:
-                    st.error("That trade no longer exists.")
-                    return
-                st.success("Trade updated.")
-                st.rerun()
-
-            if delete_submitted:
-                try:
-                    deleted = delete_trade(trade.id)
-                except Exception as exc:
-                    st.error(f"Database error: {exc}")
-                    return
-
-                if not deleted:
-                    st.error("That trade no longer exists.")
-                    return
-                st.success("Trade deleted.")
-                st.rerun()
-    else:
-        st.caption("No trades recorded for this day yet.")
+    if st.button("Close", use_container_width=True):
+        close_trade_form()
+        st.rerun()
 
 
 def main() -> None:
